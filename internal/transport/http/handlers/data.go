@@ -41,6 +41,10 @@ type secretResponse struct {
 	UpdatedAt string          `json:"updated_at"`
 }
 
+type createSecretResponse struct {
+	ID string `json:"id"`
+}
+
 // Create обрабатывает POST /api/secrets.
 func (h *DataHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFromContext(r.Context())
@@ -53,16 +57,25 @@ func (h *DataHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	id, _ := uuid.Parse(req.ID)
-	if id == uuid.Nil {
+
+	var id uuid.UUID
+	if req.ID != "" {
+		parsedID, err := uuid.Parse(req.ID)
+		if err != nil {
+			http.Error(w, "invalid id format", http.StatusBadRequest)
+			return
+		}
+		id = parsedID
+	} else {
 		id = uuid.New()
 	}
+
 	if err := h.dataSvc.SaveSecret(r.Context(), userID, id, domain.SecretType(req.Type), req.Payload, req.Meta, req.Version); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"id": id.String()})
+	json.NewEncoder(w).Encode(createSecretResponse{ID: id.String()})
 }
 
 // GetAll обрабатывает GET /api/secrets.

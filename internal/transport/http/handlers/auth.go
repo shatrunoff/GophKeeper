@@ -25,6 +25,14 @@ type authRequest struct {
 	Password string `json:"password"`
 }
 
+type registerResponse struct {
+	ID string `json:"id"`
+}
+
+type loginResponse struct {
+	Token string `json:"token"`
+}
+
 // Register обрабатывает POST /api/register.
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req authRequest
@@ -42,7 +50,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"id": user.ID.String()})
+	json.NewEncoder(w).Encode(registerResponse{ID: user.ID.String()})
 }
 
 // Login обрабатывает POST /api/login.
@@ -53,7 +61,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token, err := h.authSvc.Login(r.Context(), req.Login, req.Password)
-	if errors.Is(err, apperrors.ErrNotFound) {
+	if errors.Is(err, apperrors.ErrInvalidCredentials) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -61,5 +69,5 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]string{"token": token})
+	json.NewEncoder(w).Encode(loginResponse{Token: token})
 }

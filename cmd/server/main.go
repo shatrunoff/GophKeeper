@@ -29,6 +29,14 @@ func main() {
 	}
 	defer pool.Close()
 
+	// Ping database
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := pool.Ping(ctx); err != nil {
+		log.Fatal("db ping failed:", err)
+	}
+	log.Println("database connected")
+
 	// Security
 	jwtMgr := security.NewJWTManager(cfg.JWTSecret, cfg.JWTTTL)
 	crypto, err := security.NewCrypto([]byte(cfg.DataEncryptionKey))
@@ -72,9 +80,9 @@ func main() {
 	<-quit
 
 	log.Println("shutting down...")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatal("shutdown error:", err)
 	}
 	log.Println("server stopped")

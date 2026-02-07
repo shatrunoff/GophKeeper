@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
+
+	"gopherpass/internal/helpers"
 )
 
 // Build info (set via ldflags).
@@ -19,6 +22,33 @@ type client struct {
 	baseURL string
 	token   string
 	http    *http.Client
+	log     *slog.Logger
+}
+
+type ClientOption func(*client)
+
+func WithBaseURL(url string) ClientOption {
+	return func(c *client) { c.baseURL = url }
+}
+
+func WithToken(token string) ClientOption {
+	return func(c *client) { c.token = token }
+}
+
+func WithLogger(log *slog.Logger) ClientOption {
+	return func(c *client) { c.log = log }
+}
+
+func newClient(opts ...ClientOption) *client {
+	c := &client{
+		baseURL: "http://localhost:8080",
+		http:    &http.Client{},
+		log:     slog.New(slog.NewTextHandler(os.Stderr, nil)),
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 func main() {
@@ -27,11 +57,10 @@ func main() {
 		return
 	}
 
-	c := &client{
-		baseURL: getEnv("GOPHERPASS_URL", "http://localhost:8080"),
-		token:   os.Getenv("GOPHERPASS_TOKEN"),
-		http:    &http.Client{},
-	}
+	c := newClient(
+		WithBaseURL(helpers.GetEnv("GOPHERPASS_URL", "http://localhost:8080")),
+		WithToken(os.Getenv("GOPHERPASS_TOKEN")),
+	)
 
 	switch os.Args[1] {
 	case "version":
@@ -91,87 +120,169 @@ Environment:
 }
 
 func (c *client) register(login, password string) {
-	body, _ := json.Marshal(map[string]string{"login": login, "password": password})
-	resp, err := c.http.Post(c.baseURL+"/api/register", "application/json", bytes.NewReader(body))
+	body, err := json.Marshal(map[string]string{"login": login, "password": password})
 	if err != nil {
-		fmt.Println("Error:", err)
+		c.log.Error("failed to marshal request", "error", err)
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusCreated {
-		fmt.Println("Registered successfully")
-	} else {
-		b, _ := io.ReadAll(resp.Body)
-		fmt.Printf("Error: %s\n", b)
+
+	resp, err := c.http.Post(c.baseURL+"/api/register", "application/json", bytes.NewReader(body))
+	if err != nil {
+		c.log.Error("request failed", "error", err)
+		return
 	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			c.log.Warn("failed to close response body", "error", err)
+		}
+	}()
+
+	if resp.StatusCode == http.StatusCreated {
+		c.log.Info("registered successfully")
+		return
+	}
+
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.log.Error("failed to read response", "error", err)
+		return
+	}
+	c.log.Error("registration failed", "status", resp.StatusCode, "response", string(b))
 }
 
 func (c *client) login(login, password string) {
-	body, _ := json.Marshal(map[string]string{"login": login, "password": password})
-	resp, err := c.http.Post(c.baseURL+"/api/login", "application/json", bytes.NewReader(body))
+	body, err := json.Marshal(map[string]string{"login": login, "password": password})
 	if err != nil {
-		fmt.Println("Error:", err)
+		c.log.Error("failed to marshal request", "error", err)
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusOK {
-		var result map[string]string
-		json.NewDecoder(resp.Body).Decode(&result)
-		fmt.Printf("Token: %s\n", result["token"])
-		fmt.Println("Set: export GOPHERPASS_TOKEN=<token>")
-	} else {
-		b, _ := io.ReadAll(resp.Body)
-		fmt.Printf("Error: %s\n", b)
+
+	resp, err := c.http.Post(c.baseURL+"/api/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		c.log.Error("request failed", "error", err)
+		return
 	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			c.log.Warn("failed to close response body", "error", err)
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.log.Error("failed to read response", "error", err)
+			return
+		}
+		c.log.Error("login failed", "status", resp.StatusCode, "response", string(b))
+		return
+	}
+
+	var result map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		c.log.Error("failed to decode response", "error", err)
+		return
+	}
+
+	fmt.Printf("Token: %s\n", result["token"])
+	fmt.Println("Set: export GOPHERPASS_TOKEN=<token>")
 }
 
 func (c *client) listSecrets() {
-	req, _ := http.NewRequest("GET", c.baseURL+"/api/secrets", nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	resp, err := c.http.Do(req)
+	req, err := http.NewRequest("GET", c.baseURL+"/api/secrets", nil)
 	if err != nil {
-		fmt.Println("Error:", err)
+		c.log.Error("failed to create request", "error", err)
 		return
 	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.log.Error("request failed", "error", err)
+		return
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			c.log.Warn("failed to close response body", "error", err)
+		}
+	}()
+
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.log.Error("failed to read response", "error", err)
+		return
+	}
 	fmt.Println(string(b))
 }
 
 func (c *client) addSecret(secretType, payload string) {
-	body, _ := json.Marshal(map[string]interface{}{
+	body, err := json.Marshal(map[string]interface{}{
 		"type":    secretType,
 		"payload": json.RawMessage(payload),
 		"version": 0,
 	})
-	req, _ := http.NewRequest("POST", c.baseURL+"/api/secrets", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
 	if err != nil {
-		fmt.Println("Error:", err)
+		c.log.Error("failed to marshal request", "error", err)
 		return
 	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
+
+	req, err := http.NewRequest("POST", c.baseURL+"/api/secrets", bytes.NewReader(body))
+	if err != nil {
+		c.log.Error("failed to create request", "error", err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.log.Error("request failed", "error", err)
+		return
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			c.log.Warn("failed to close response body", "error", err)
+		}
+	}()
+
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.log.Error("failed to read response", "error", err)
+		return
+	}
 	fmt.Println(string(b))
 }
 
 func (c *client) deleteSecret(id string) {
-	req, _ := http.NewRequest("DELETE", c.baseURL+"/api/secrets/"+id, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	resp, err := c.http.Do(req)
+	req, err := http.NewRequest("DELETE", c.baseURL+"/api/secrets/"+id, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
+		c.log.Error("failed to create request", "error", err)
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNoContent {
-		fmt.Println("Deleted")
-	} else {
-		b, _ := io.ReadAll(resp.Body)
-		fmt.Printf("Error: %s\n", b)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.log.Error("request failed", "error", err)
+		return
 	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			c.log.Warn("failed to close response body", "error", err)
+		}
+	}()
+
+	if resp.StatusCode == http.StatusNoContent {
+		c.log.Info("deleted successfully")
+		return
+	}
+
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.log.Error("failed to read response", "error", err)
+		return
+	}
+	c.log.Error("delete failed", "status", resp.StatusCode, "response", string(b))
 }
 
 func (c *client) sync(since string) {
@@ -179,21 +290,29 @@ func (c *client) sync(since string) {
 	if since != "" {
 		url += "?since=" + since
 	}
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	resp, err := c.http.Do(req)
+
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		fmt.Println("Error:", err)
+		c.log.Error("failed to create request", "error", err)
 		return
 	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
-	fmt.Println(string(b))
-}
+	req.Header.Set("Authorization", "Bearer "+c.token)
 
-func getEnv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+	resp, err := c.http.Do(req)
+	if err != nil {
+		c.log.Error("request failed", "error", err)
+		return
 	}
-	return def
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			c.log.Warn("failed to close response body", "error", err)
+		}
+	}()
+
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.log.Error("failed to read response", "error", err)
+		return
+	}
+	fmt.Println(string(b))
 }

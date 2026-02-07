@@ -8,4 +8,6 @@ var (
 	ErrNotFound = errors.New("not found")
 	// ErrAlreadyExists возвращается при попытке создать дубликат.
 	ErrAlreadyExists = errors.New("already exists")
+	// ErrInvalidCredentials возвращается при неверных учётных данных.
+	ErrInvalidCredentials = errors.New("invalid credentials")
 )

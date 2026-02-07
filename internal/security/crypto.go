@@ -6,10 +6,14 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 )
 
-var ErrDecryptFailed = errors.New("decryption failed")
+var (
+	ErrDecryptFailed = errors.New("decryption failed")
+	ErrInvalidKeyLen = errors.New("key must be exactly 32 bytes for AES-256")
+)
 
 // Crypto обеспечивает шифрование AES-256-GCM.
 type Crypto struct {
@@ -18,6 +22,9 @@ type Crypto struct {
 
 // NewCrypto создаёт Crypto с ключом (32 байта для AES-256).
 func NewCrypto(key []byte) (*Crypto, error) {
+	if len(key) != 32 {
+		return nil, fmt.Errorf("%w: got %d bytes", ErrInvalidKeyLen, len(key))
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err

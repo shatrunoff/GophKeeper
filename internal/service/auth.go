@@ -46,10 +46,10 @@ func (s *AuthService) Register(ctx context.Context, login, password string) (*do
 func (s *AuthService) Login(ctx context.Context, login, password string) (string, error) {
 	user, err := s.userRepo.GetByLogin(ctx, login)
 	if err != nil {
-		return "", apperrors.ErrNotFound
+		return "", apperrors.ErrInvalidCredentials
 	}
 	if err := security.ComparePassword(user.PasswordHash, password); err != nil {
-		return "", apperrors.ErrNotFound
+		return "", apperrors.ErrInvalidCredentials
 	}
 	return s.jwt.Generate(user.ID)
 }

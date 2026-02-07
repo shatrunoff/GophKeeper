@@ -10,6 +10,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// Repository определяет базовые CRUD операции.
+type Repository[T any] interface {
+	Create(ctx context.Context, entity T) error
+	GetByID(ctx context.Context, id uuid.UUID) (*T, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+}
+
 // UserRepository определяет методы работы с пользователями.
 type UserRepository interface {
 	Create(ctx context.Context, user domain.User) error
